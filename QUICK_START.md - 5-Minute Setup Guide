@@ -1,0 +1,184 @@
+# ⚡ 5-Minute Quick Start Guide
+
+## Step 1: Install Dependencies (1 min)
+
+```bash
+npm install express mongoose jsonwebtoken bcryptjs winston helmet cors dotenv express-rate-limit applicationinsights passport passport-oauth2 axios
+
+npm install --save-dev nodemon
+```
+
+## Step 2: Generate Secrets (30 sec)
+
+```bash
+# Run this command
+node -e "const crypto = require('crypto'); console.log('JWT_ACCESS_SECRET=' + crypto.randomBytes(32).toString('hex')); console.log('JWT_REFRESH_SECRET=' + crypto.randomBytes(32).toString('hex')); console.log('ENCRYPTION_KEY=' + crypto.randomBytes(32).toString('hex'));"
+```
+
+Copy the output!
+
+## Step 3: Create .env File (1 min)
+
+Create `.env` file with this content (paste your generated secrets):
+
+```env
+# Required
+SERVICE_NAME=auth-service
+APP_VERSION=1.0.0
+NODE_ENV=development
+PORT=3000
+
+JWT_ACCESS_SECRET=paste-generated-secret-here
+JWT_REFRESH_SECRET=paste-generated-secret-here
+JWT_ISSUER=my-app
+JWT_AUDIENCE=my-app-api
+
+ENCRYPTION_KEY=paste-generated-key-here
+
+MONGODB_URI=mongodb://localhost:27017/auth-db
+
+LOG_LEVEL=info
+
+# SAP OAuth (fill with your values)
+SAP_BASE_URL=https://your-sap-instance.com
+SAP_CLIENT_ID=your-client-id
+SAP_CLIENT_SECRET=your-client-secret
+SAP_AUTHORIZATION_URL=https://your-sap-instance.com/oauth/authorize
+SAP_TOKEN_URL=https://your-sap-instance.com/oauth/token
+SAP_USER_INFO_URL=https://your-sap-instance.com/oauth/userinfo
+SAP_CALLBACK_URL=http://localhost:3000/auth/sap/callback
+SAP_SCOPES=openid email profile
+
+# Frontend
+FRONTEND_URL=http://localhost:3000
+
+# Optional
+APPLICATIONINSIGHTS_CONNECTION_STRING=
+```
+
+## Step 4: Copy Files from Artifacts (2 min)
+
+Copy these files from Claude's artifacts above:
+
+### Main Files
+1. **main.js** ← Copy from "main.js - Application Entry Point"
+2. **server.js** ← Copy from "Complete server.js with SAP OAuth Integration"
+3. **package.json** ← Copy from "package.json - Updated"
+
+### Create Folders & Copy Other Files
+```bash
+mkdir -p config models services middlewares routes strategies utils logs
+```
+
+Then copy from first artifact "Production-Grade OAuth Authentication System":
+
+4. **config/auth.config.js**
+5. **models/Session.js**
+6. **models/User.js** ← Copy from "SAP OAuth Integration"
+7. **services/token.service.js**
+8. **services/session.service.js**
+9. **services/sap.service.js** ← Copy from "SAP OAuth Integration"
+10. **services/sap-ropc.service.js** ← Copy from "SAP ROPC Flow"
+11. **middlewares/auth.middleware.js**
+12. **middlewares/request-tracking.middleware.js**
+13. **routes/auth.routes.js** ← Copy base + add SAP routes from "SAP OAuth Integration"
+14. **strategies/sap.strategy.js** ← Copy from "SAP OAuth Integration"
+15. **utils/logger.js**
+
+## Step 5: Start MongoDB (30 sec)
+
+```bash
+# Option A: Local MongoDB
+mongod
+
+# Option B: Docker
+docker run -d -p 27017:27017 --name mongodb mongo:latest
+```
+
+## Step 6: Start the Server (10 sec)
+
+```bash
+npm run dev
+```
+
+## ✅ You're Done!
+
+You should see:
+
+```
+╔══════════════════════════════════════════════════════════╗
+║  🔐 Auth Service with SAP OAuth Running                  ║
+╚══════════════════════════════════════════════════════════╝
+```
+
+## 🧪 Test It!
+
+### Option 1: SAP OAuth (Redirect Flow - Recommended)
+
+Open browser:
+```
+http://localhost:3000/auth/sap
+```
+
+You'll be redirected to SAP login → Login → User created automatically!
+
+### Option 2: SAP Direct Login (ROPC)
+
+Use Postman:
+```http
+POST http://localhost:3000/auth/sap/login
+Content-Type: application/json
+
+{
+  "username": "your-sap-username",
+  "password": "your-sap-password"
+}
+```
+
+## 🎉 Next Steps
+
+1. **Test protected route:**
+   ```http
+   GET http://localhost:3000/api/profile
+   Authorization: Bearer <your_access_token>
+   ```
+
+2. **Check if user was created:**
+   ```bash
+   mongosh
+   use auth-db
+   db.users.find().pretty()
+   ```
+
+3. **View logs:**
+   ```bash
+   tail -f logs/combined.log
+   ```
+
+## 🚨 Common Issues
+
+**MongoDB not starting?**
+```bash
+sudo systemctl start mongod
+# or
+brew services start mongodb-community
+```
+
+**Port 3000 in use?**
+```bash
+# Change in .env
+PORT=3001
+```
+
+**SAP OAuth not working?**
+- Verify URLs in `.env` match SAP configuration
+- Check `SAP_CALLBACK_URL` is registered in SAP
+- Confirm Client ID and Secret are correct
+
+## 📖 Full Documentation
+
+See README.md for complete documentation.
+
+---
+
+**That's it! Your auth service is running! 🎉**

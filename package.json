@@ -1,0 +1,74 @@
+{
+  "name": "auth-service",
+  "version": "1.0.0",
+  "description": "Production-grade OAuth authentication service with SAP integration",
+  "main": "main.js",
+  "scripts": {
+    "start": "node main.js",
+    "dev": "nodemon main.js",
+    "generate-secrets": "node main.js --generate-secrets",
+    "check-config": "node main.js --check-config",
+    "test": "jest --coverage",
+    "lint": "eslint .",
+    "logs": "tail -f logs/combined.log",
+    "logs:error": "tail -f logs/error.log",
+    "logs:auth": "tail -f logs/auth.log"
+  },
+  "keywords": [
+    "authentication",
+    "oauth",
+    "jwt",
+    "sap",
+    "express",
+    "mongodb"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "applicationinsights": "^2.9.0",
+    "axios": "^1.6.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.1.5",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.0.3",
+    "passport": "^0.7.0",
+    "passport-oauth2": "^1.8.0",
+    "socket.io": "^4.6.0",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2",
+    "eslint": "^8.56.0",
+    "jest": "^29.7.0",
+    "supertest": "^6.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
+  "nodemonConfig": {
+    "watch": [
+      "main.js",
+      "server.js",
+      "config/",
+      "models/",
+      "services/",
+      "middlewares/",
+      "routes/",
+      "strategies/",
+      "utils/"
+    ],
+    "ext": "js,json",
+    "ignore": [
+      "logs/",
+      "node_modules/",
+      "test/",
+      ".env"
+    ],
+    "delay": "1000"
+  }
+}

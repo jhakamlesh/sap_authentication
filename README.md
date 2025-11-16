@@ -1,356 +1,518 @@
-# SAP OAuth Setup Guide - Step by Step
+# 🔐 Authentication Service with SAP OAuth
+
+Production-grade authentication microservice built with Express.js, MongoDB, and SAP OAuth integration.
+
+## ✨ Features
+
+- ✅ **JWT Authentication** - Secure token-based authentication
+- ✅ **SAP OAuth Integration** - Standard OAuth 2.0 redirect flow
+- ✅ **SAP ROPC Support** - Direct credential login (optional)
+- ✅ **Session Management** - MongoDB-based session storage with encryption
+- ✅ **Token Refresh** - Automatic token rotation
+- ✅ **Role-Based Access Control** - RBAC for protected routes
+- ✅ **Application Insights** - Azure monitoring integration
+- ✅ **Comprehensive Logging** - Winston-based structured logging
+- ✅ **Security Features** - Helmet, CORS, rate limiting
+- ✅ **Health Checks** - Kubernetes-ready probes
 
 ## 📋 Prerequisites
 
-✅ You have received from SAP:
-- Client ID
-- Client Secret  
-- Base URL
+- Node.js >= 18.0.0
+- MongoDB >= 5.0
+- npm >= 9.0.0
+- SAP OAuth credentials (Client ID, Secret, Base URL)
 
-✅ Your existing auth service is running
+## 🚀 Quick Start
 
-## 🚀 Step-by-Step Setup
-
-### Step 1: Install Additional Dependencies
+### 1. Clone and Install
 
 ```bash
-npm install passport passport-oauth2 axios
+# Create project directory
+mkdir auth-service && cd auth-service
+
+# Initialize npm (if not already done)
+npm init -y
+
+# Install dependencies
+npm install express mongoose jsonwebtoken bcryptjs winston helmet cors dotenv express-rate-limit applicationinsights passport passport-oauth2 axios socket.io
+
+# Install dev dependencies
+npm install --save-dev nodemon eslint jest supertest
 ```
 
-### Step 2: Update Environment Variables
+### 2. Project Structure
 
-Add to your `.env` file:
+Create this folder structure:
+
+```
+auth-service/
+├── config/
+│   └── auth.config.js
+├── models/
+│   ├── User.js
+│   └── Session.js
+├── services/
+│   ├── token.service.js
+│   ├── session.service.js
+│   ├── sap.service.js
+│   └── sap-ropc.service.js
+├── middlewares/
+│   ├── auth.middleware.js
+│   └── request-tracking.middleware.js
+├── routes/
+│   └── auth.routes.js
+├── strategies/
+│   └── sap.strategy.js
+├── utils/
+│   └── logger.js
+├── logs/
+├── .env
+├── .env.example
+├── .gitignore
+├── main.js
+├── server.js
+├── package.json
+└── README.md
+```
+
+### 3. Configure Environment
+
+```bash
+# Generate secure secrets
+npm run generate-secrets
+
+# Copy example env file
+cp .env.example .env
+```
+
+Edit `.env` with your configuration:
 
 ```env
+# Application
+SERVICE_NAME=auth-service
+APP_VERSION=1.0.0
+NODE_ENV=development
+PORT=3000
+
+# JWT Configuration (use generated secrets)
+JWT_ACCESS_SECRET=your-generated-secret-here
+JWT_REFRESH_SECRET=your-generated-secret-here
+JWT_ISSUER=my-app
+JWT_AUDIENCE=my-app-api
+
+# Encryption (use generated key)
+ENCRYPTION_KEY=your-generated-encryption-key-here
+
+# MongoDB
+MONGODB_URI=mongodb://localhost:27017/auth-db
+
+# Logging
+LOG_LEVEL=info
+
 # SAP OAuth Configuration
 SAP_BASE_URL=https://your-sap-instance.com
-SAP_CLIENT_ID=your-actual-client-id-here
-SAP_CLIENT_SECRET=your-actual-client-secret-here
-
-# These URLs might be different - check SAP documentation
+SAP_CLIENT_ID=your-client-id
+SAP_CLIENT_SECRET=your-client-secret
 SAP_AUTHORIZATION_URL=https://your-sap-instance.com/oauth/authorize
 SAP_TOKEN_URL=https://your-sap-instance.com/oauth/token
 SAP_USER_INFO_URL=https://your-sap-instance.com/oauth/userinfo
-
-# Callback URL (must match what you registered in SAP)
 SAP_CALLBACK_URL=http://localhost:3000/auth/sap/callback
-
-# Scopes (adjust based on SAP requirements)
 SAP_SCOPES=openid email profile
 
-# Backend URL
-BACKEND_URL=http://localhost:3000
+# Frontend
+FRONTEND_URL=http://localhost:3000
+
+# Application Insights (Optional)
+APPLICATIONINSIGHTS_CONNECTION_STRING=
 ```
 
-**Important Notes:**
-- Replace `your-sap-instance.com` with actual SAP domain
-- The URLs (`/oauth/authorize`, `/oauth/token`, etc.) might be different for your SAP setup
-- Common SAP OAuth endpoints:
-  - SAP Cloud Platform: `https://<subdomain>.authentication.<region>.hana.ondemand.com`
-  - SAP BTP: `https://<subdomain>.accounts.ondemand.com`
-  - Custom SAP: Check your SAP administrator
+### 4. Copy Files from Artifacts
 
-### Step 3: Verify SAP Endpoint URLs
+Copy the code from Claude artifacts into respective files:
 
-Contact your SAP admin or check SAP documentation to confirm:
+- `main.js` ← "main.js - Application Entry Point" artifact
+- `server.js` ← "Complete server.js with SAP OAuth Integration" artifact  
+- `package.json` ← "package.json - Updated with Main Entry Point" artifact
+- All other files from previous artifacts
+
+### 5. Validate Configuration
 
 ```bash
-# Test if endpoints are accessible
-curl https://your-sap-instance.com/oauth/authorize
-
-# Or use Postman to verify
+# Check if configuration is valid
+npm run check-config
 ```
 
-Common SAP OAuth URL patterns:
-```
-Authorization: https://<your-domain>/oauth/authorize
-Token:        https://<your-domain>/oauth/token  
-UserInfo:     https://<your-domain>/oauth/userinfo
-```
-
-### Step 4: Create Required Files
-
-#### A. Create User Model
-
-Create file: `models/User.js` (copy from artifact)
-
-#### B. Create SAP Strategy
-
-Create file: `strategies/sap.strategy.js` (copy from artifact)
-
-#### C. Create SAP Service
-
-Create file: `services/sap.service.js` (copy from artifact)
-
-#### D. Update Auth Routes
-
-Edit: `routes/auth.routes.js` - Add SAP routes from artifact
-
-### Step 5: Update server.js
-
-Add these lines to `server.js`:
-
-```javascript
-// Add near the top with other requires
-const passport = require('./strategies/sap.strategy');
-
-// Add after other middleware (after express.json())
-app.use(passport.initialize());
-```
-
-### Step 6: Initialize Database Indexes
+### 6. Start MongoDB
 
 ```bash
-# Update init-indexes.js to include User model
-node scripts/init-indexes.js
+# Local MongoDB
+mongod
+
+# Or using Docker
+docker run -d -p 27017:27017 --name mongodb mongo:latest
 ```
 
-Or manually in MongoDB:
-
-```javascript
-db.users.createIndex({ email: 1 }, { unique: true })
-db.users.createIndex({ sapId: 1 }, { unique: true, sparse: true })
-db.users.createIndex({ provider: 1, sapId: 1 })
-```
-
-### Step 7: Test the Setup
-
-#### Option A: Using Browser
-
-1. **Start your server:**
-   ```bash
-   npm run dev
-   ```
-
-2. **Open browser and navigate to:**
-   ```
-   http://localhost:3000/auth/sap
-   ```
-
-3. **You should be redirected to SAP login page**
-
-4. **After login, you'll be redirected back with tokens**
-
-#### Option B: Using Postman (for testing flow)
-
-1. **Initiate OAuth Flow:**
-   - Method: GET
-   - URL: `http://localhost:3000/auth/sap`
-   - This will redirect you to SAP
-
-2. **Follow the redirect to SAP login**
-
-3. **After successful login, check:**
-   - MongoDB users collection: `db.users.find()`
-   - MongoDB sessions collection: `db.sessions.find()`
-
-### Step 8: Verify User Creation
+### 7. Start the Service
 
 ```bash
-# Connect to MongoDB
-mongosh
+# Development mode (with auto-reload)
+npm run dev
 
-# Switch to your database
-use auth-db
+# Production mode
+npm start
+```
 
-# Check if user was created
-db.users.find().pretty()
+You should see:
 
-# You should see something like:
+```
+╔══════════════════════════════════════════════════════════╗
+║                                                          ║
+║  🔐 Auth Service with SAP OAuth Running                  ║
+║                                                          ║
+║  Environment: development                                ║
+║  Port:        3000                                       ║
+║  Version:     1.0.0                                      ║
+...
+╚══════════════════════════════════════════════════════════╝
+```
+
+## 🧪 Testing
+
+### Test SAP OAuth Flow
+
+```bash
+# Open in browser
+http://localhost:3000/auth/sap
+
+# You'll be redirected to SAP login
+# After successful login, user will be created automatically
+```
+
+### Test with Postman
+
+#### 1. Health Check
+```http
+GET http://localhost:3000/health
+```
+
+#### 2. SAP OAuth Login (Redirect Flow)
+```http
+GET http://localhost:3000/auth/sap
+# Follow redirects in browser
+```
+
+#### 3. SAP Direct Login (ROPC)
+```http
+POST http://localhost:3000/auth/sap/login
+Content-Type: application/json
+
 {
-  _id: ObjectId("..."),
-  sapId: "user@sap.com",
-  email: "user@company.com",
-  name: "John Doe",
-  provider: "sap",
-  roles: ["user"],
-  sapProfile: { ... },
-  createdAt: ISODate("2025-..."),
-  updatedAt: ISODate("2025-...")
+  "username": "your-sap-username",
+  "password": "your-sap-password"
 }
-
-# Check session
-db.sessions.find({ provider: 'sap' }).pretty()
 ```
 
-## 🔧 Common SAP OAuth URL Configurations
-
-### SAP Cloud Platform Identity Authentication
-
-```env
-SAP_BASE_URL=https://<tenant>.accounts.ondemand.com
-SAP_AUTHORIZATION_URL=https://<tenant>.accounts.ondemand.com/oauth2/authorize
-SAP_TOKEN_URL=https://<tenant>.accounts.ondemand.com/oauth2/token
-SAP_USER_INFO_URL=https://<tenant>.accounts.ondemand.com/oauth2/userinfo
-```
-
-### SAP BTP (Business Technology Platform)
-
-```env
-SAP_BASE_URL=https://<subdomain>.authentication.<region>.hana.ondemand.com
-SAP_AUTHORIZATION_URL=https://<subdomain>.authentication.<region>.hana.ondemand.com/oauth/authorize
-SAP_TOKEN_URL=https://<subdomain>.authentication.<region>.hana.ondemand.com/oauth/token
-SAP_USER_INFO_URL=https://<subdomain>.authentication.<region>.hana.ondemand.com/userinfo
-```
-
-### SAP SuccessFactors
-
-```env
-SAP_BASE_URL=https://api<datacenter>.successfactors.com
-SAP_AUTHORIZATION_URL=https://api<datacenter>.successfactors.com/oauth/authorize
-SAP_TOKEN_URL=https://api<datacenter>.successfactors.com/oauth/token
-SAP_USER_INFO_URL=https://api<datacenter>.successfactors.com/odata/v2/User
-```
-
-## 🧪 Testing Scenarios
-
-### Test 1: First-time User Login
-
-```bash
-# 1. Open browser
-http://localhost:3000/auth/sap
-
-# 2. Login with SAP credentials
-
-# 3. Verify in MongoDB
-db.users.countDocuments({ provider: 'sap' })
-# Should return: 1
-
-# 4. Verify session
-db.sessions.countDocuments({ provider: 'sap', isActive: true })
-# Should return: 1
-```
-
-### Test 2: Existing User Login
-
-```bash
-# 1. Login again with same SAP account
-http://localhost:3000/auth/sap
-
-# 2. Verify user count (should still be 1)
-db.users.countDocuments({ provider: 'sap' })
-# Should return: 1 (not 2)
-
-# 3. Verify session was reused (if same browser)
-db.sessions.countDocuments({ provider: 'sap', isActive: true })
-# Should return: 1 (same session updated)
-```
-
-### Test 3: Making SAP API Calls
-
-```javascript
-// In your API route
-router.get('/api/test-sap', authenticateToken, async (req, res) => {
-  try {
-    const sapService = require('../services/sap.service');
-    
-    // Example: Get user profile from SAP
-    const profile = await sapService.makeRequest(
-      req.session,
-      '/api/user/profile',
-      'GET'
-    );
-
-    res.json({
-      success: true,
-      data: profile
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+Response:
+```json
+{
+  "success": true,
+  "data": {
+    "accessToken": "eyJhbGc...",
+    "refreshToken": "eyJhbGc...",
+    "expiresIn": "15m",
+    "tokenType": "Bearer",
+    "user": {
+      "id": "...",
+      "email": "user@company.com",
+      "name": "John Doe",
+      "roles": ["user"]
+    }
   }
-});
+}
 ```
 
-## 🔍 Troubleshooting
-
-### Issue 1: "Redirect URI Mismatch"
-
-**Error:** `redirect_uri_mismatch` or similar
-
-**Solution:**
-1. Check SAP OAuth app configuration
-2. Ensure `SAP_CALLBACK_URL` in `.env` matches exactly what's registered in SAP
-3. Include protocol (`http://` or `https://`)
-4. Port number must match if specified
-
-```env
-# Make sure this EXACTLY matches SAP configuration
-SAP_CALLBACK_URL=http://localhost:3000/auth/sap/callback
+#### 4. Access Protected Route
+```http
+GET http://localhost:3000/api/profile
+Authorization: Bearer your_access_token
 ```
 
-### Issue 2: "Invalid Client"
+#### 5. Refresh Token
+```http
+POST http://localhost:3000/auth/refresh
+Content-Type: application/json
 
-**Error:** `invalid_client`
+{
+  "refreshToken": "your_refresh_token"
+}
+```
 
-**Solution:**
-1. Verify `SAP_CLIENT_ID` and `SAP_CLIENT_SECRET` are correct
-2. Check if client is enabled in SAP
-3. Verify scopes are allowed for your client
+#### 6. Get Active Sessions
+```http
+GET http://localhost:3000/auth/sessions
+Authorization: Bearer your_access_token
+```
 
-### Issue 3: "User Info Endpoint Failed"
+#### 7. Logout
+```http
+POST http://localhost:3000/auth/logout
+Authorization: Bearer your_access_token
+```
 
-**Error:** 401 or 403 on userinfo endpoint
+## 📚 API Documentation
 
-**Solution:**
-1. Verify `SAP_USER_INFO_URL` is correct
-2. Check if `openid` scope is included
-3. Try alternative endpoints:
-   ```env
-   # Try these alternatives
-   SAP_USER_INFO_URL=https://<domain>/userinfo
-   SAP_USER_INFO_URL=https://<domain>/oauth2/userinfo
-   SAP_USER_INFO_URL=https://<domain>/oauth/userinfo
-   ```
+### Authentication Endpoints
 
-### Issue 4: "Token Expired" on API Calls
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| POST | `/auth/login` | Email/password login | No |
+| GET | `/auth/sap` | Initiate SAP OAuth | No |
+| GET | `/auth/sap/callback` | SAP OAuth callback | No |
+| POST | `/auth/sap/login` | SAP direct login (ROPC) | No |
+| POST | `/auth/refresh` | Refresh access token | No |
+| POST | `/auth/logout` | Logout current session | Yes |
+| POST | `/auth/logout-all` | Logout all sessions | Yes |
+| GET | `/auth/sessions` | Get active sessions | Yes |
 
-**Error:** Token expired when making SAP API calls
+### Protected Endpoints
 
-**Solution:** The system auto-refreshes tokens, but check:
+| Method | Endpoint | Description | Required Role |
+|--------|----------|-------------|---------------|
+| GET | `/api/profile` | Get user profile | Any |
+| PUT | `/api/profile` | Update profile | Any |
+| GET | `/api/test` | Test protected route | Any |
+| GET | `/api/sap/business-data` | Get SAP data | Any (SAP auth) |
+| GET | `/api/admin/users` | List all users | Admin |
+
+### Health Check Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/health` | Full health status |
+| GET | `/ready` | Readiness probe |
+| GET | `/alive` | Liveness probe |
+
+## 🔧 Configuration Options
+
+### Session Management
+
+Edit `config/auth.config.js`:
 
 ```javascript
-// Verify token refresh is working
-db.sessions.find({ provider: 'sap' }, { providerTokens: 1 })
-
-// Check logs
-tail -f logs/combined.log | grep "SAP_TOKEN_REFRESHED"
+session: {
+  maxActiveSessions: 5,              // Max concurrent sessions per user
+  inactivityTimeout: 30 * 60 * 1000, // 30 minutes
+  reuseDeviceSession: true,          // Reuse session from same browser
+  singleSessionPerUser: false        // Force single session only
+}
 ```
 
-### Issue 5: Cannot Find User Model
-
-**Error:** `Cannot find module '../models/User'`
-
-**Solution:** Make sure User model file exists:
-```bash
-ls -la models/User.js
-```
-
-## 📊 Monitoring SAP OAuth
-
-### Check Active SAP Sessions
+### JWT Settings
 
 ```javascript
-// MongoDB query
-db.sessions.aggregate([
-  { $match: { provider: 'sap', isActive: true } },
-  { $group: {
-      _id: '$userId',
-      sessionCount: { $sum: 1 },
-      lastActivity: { $max: '$lastActivity' }
-  }}
-])
+jwt: {
+  accessTokenExpiry: '15m',   // Short-lived access token
+  refreshTokenExpiry: '7d',   // Long-lived refresh token
+  issuer: 'your-app-name',
+  audience: 'your-app-api'
+}
 ```
+
+## 🔒 Security
+
+### Best Practices Implemented
+
+- ✅ JWT tokens with signature verification
+- ✅ Refresh token rotation
+- ✅ Session encryption (AES-256)
+- ✅ Rate limiting on auth endpoints
+- ✅ CORS configuration
+- ✅ Helmet security headers
+- ✅ Request logging and tracking
+- ✅ Input validation
+- ✅ SQL injection protection (using Mongoose)
+
+### Production Checklist
+
+- [ ] Change all default secrets
+- [ ] Enable HTTPS
+- [ ] Configure Application Insights
+- [ ] Set up proper CORS origins
+- [ ] Enable rate limiting
+- [ ] Review and set session limits
+- [ ] Configure proper MongoDB replica set
+- [ ] Set up backup strategy
+- [ ] Configure logging retention
+- [ ] Set up monitoring alerts
+
+## 📊 Monitoring
+
+### Application Insights Integration
+
+The service automatically tracks:
+- Authentication events
+- Failed login attempts
+- Token refresh operations
+- API performance metrics
+- Database query performance
+- External API calls (SAP)
+- Error rates and exceptions
 
 ### View Logs
 
 ```bash
-# All SAP-related logs
-tail -f logs/combined.log | grep SAP
+# All logs
+npm run logs
 
-# SAP authentication events
-tail -f logs/auth.log | grep "SAP_"
+# Error logs only
+npm run logs:error
 
-# SAP errors
+# Auth-specific logs
+npm run logs:auth
+
+# Real-time
+tail -f logs/combined.log
+```
+
+### MongoDB Monitoring
+
+```javascript
+// Check active sessions
+db.sessions.countDocuments({ isActive: true })
+
+// Check users by provider
+db.users.aggregate([
+  { $group: { _id: "$provider", count: { $sum: 1 } } }
+])
+
+// Find expired sessions
+db.sessions.find({ expiresAt: { $lt: new Date() } }).count()
+```
+
+## 🐛 Troubleshooting
+
+### MongoDB Connection Error
+
+```
+Error: connect ECONNREFUSED 127.0.0.1:27017
+```
+
+**Solution:** Start MongoDB
+```bash
+mongod
+# or
+docker start mongodb
+```
+
+### Port Already in Use
+
+```
+Error: listen EADDRINUSE: address already in use :::3000
+```
+
+**Solution:** Change port or kill process
+```bash
+# Change port in .env
+PORT=3001
+
+# Or kill existing process
+lsof -ti:3000 | xargs kill -9
+```
+
+### SAP OAuth Error: redirect_uri_mismatch
+
+**Solution:** Ensure `SAP_CALLBACK_URL` in `.env` exactly matches URL registered in SAP OAuth app configuration.
+
+### Invalid Client Error
+
+**Solution:** Verify `SAP_CLIENT_ID` and `SAP_CLIENT_SECRET` are correct and the client is enabled in SAP.
+
+### User Info Endpoint Failed
+
+**Solution:** Check `SAP_USER_INFO_URL` is correct. Try alternatives:
+- `/userinfo`
+- `/oauth2/userinfo`
+- `/oauth/userinfo`
+
+## 🚀 Deployment
+
+### Using PM2
+
+```bash
+npm install -g pm2
+
+# Start
+pm2 start main.js --name auth-service
+
+# Monitor
+pm2 monit
+
+# Logs
+pm2 logs auth-service
+
+# Restart
+pm2 restart auth-service
+
+# Stop
+pm2 stop auth-service
+```
+
+### Using Docker
+
+```dockerfile
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+EXPOSE 3000
+CMD ["node", "main.js"]
+```
+
+Build and run:
+```bash
+docker build -t auth-service .
+docker run -p 3000:3000 --env-file .env auth-service
+```
+
+### Environment Variables for Production
+
+```env
+NODE_ENV=production
+PORT=3000
+MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/auth-db
+FRONTEND_URL=https://your-frontend-domain.com
+SAP_CALLBACK_URL=https://your-backend-domain.com/auth/sap/callback
+APPLICATIONINSIGHTS_CONNECTION_STRING=InstrumentationKey=...
+```
+
+## 📖 Additional Resources
+
+- [SAP OAuth Documentation](https://help.sap.com/docs/IDENTITY_AUTHENTICATION)
+- [Express.js Best Practices](https://expressjs.com/en/advanced/best-practice-security.html)
+- [JWT Best Practices](https://tools.ietf.org/html/rfc8725)
+- [MongoDB Security Checklist](https://docs.mongodb.com/manual/administration/security-checklist/)
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
+
+## 📄 License
+
+MIT
+
+## 🆘 Support
+
+For issues or questions:
+1. Check logs in `logs/` directory
+2. Verify configuration with `npm run check-config`
+3. Check MongoDB is running
+4. Verify all environment variables are set
+
+---
+
+**Made with ❤️ for secure authentication**
