@@ -5,6 +5,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const helmet = require('helmet');
 const cors = require('cors');
+const session = require('express-session');
 const passport = require('passport');
 require('dotenv').config();
 
@@ -49,6 +50,20 @@ app.use(cors({
 }));
 
 // ============================================================================
+// SESSION CONFIGURATION
+// ============================================================================
+app.use(session({
+  secret: process.env.SESSION_SECRET || process.env.JWT_ACCESS_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === 'production',
+    httpOnly: true,
+    maxAge: 10 * 60 * 1000 // 10 minutes (only for OAuth flow)
+  }
+}));
+
+// ============================================================================
 // BODY PARSING
 // ============================================================================
 app.use(express.json({ limit: '10mb' }));
@@ -58,6 +73,11 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // PASSPORT INITIALIZATION
 // ============================================================================
 app.use(passport.initialize());
+
+// ============================================================================
+// SESSION INITIALIZATION
+// ============================================================================
+app.use(passport.session());
 
 // ============================================================================
 // REQUEST TRACKING
