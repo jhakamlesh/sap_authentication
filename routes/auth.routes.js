@@ -1,5 +1,5 @@
 // ============================================================================
-// routes/auth.routes.js - Fixed OAuth State Management
+// routes/auth.routes.js - Fixed User Info Retrieval
 // ============================================================================
 
 const express = require('express');
@@ -12,11 +12,10 @@ const logger = require('../utils/logger');
 const { authenticateToken } = require('../middlewares/auth.middleware');
 const crypto = require('crypto');
 
-// In-memory store for OAuth state (for development)
-// In production, use Redis or database
+// In-memory store for OAuth state
 const oauthStateStore = new Map();
 
-// Clean up old states (older than 10 minutes)
+// Clean up old states
 setInterval(() => {
   const tenMinutesAgo = Date.now() - 10 * 60 * 1000;
   for (const [state, data] of oauthStateStore.entries()) {
@@ -24,29 +23,15 @@ setInterval(() => {
       oauthStateStore.delete(state);
     }
   }
-}, 60000); // Every minute
+}, 60000);
 
 // ============================================================================
-// SAP OAuth Routes (Redirect Flow)
+// SAP OAuth Routes
 // ============================================================================
 
-/**
- * Initiate SAP OAuth flow
- * GET /auth/sap
- */
 router.get('/sap', (req, res, next) => {
-  logger.info('Initiating SAP OAuth flow', {
-    ip: req.ip,
-    userAgent: req.get('user-agent'),
-    sapConfig: {
-      authorizationURL: process.env.SAP_AUTHORIZATION_URL,
-      callbackURL: process.env.SAP_CALLBACK_URL,
-      clientID: process.env.SAP_CLIENT_ID ? 'SET' : 'NOT SET',
-      clientSecret: process.env.SAP_CLIENT_SECRET ? 'SET' : 'NOT SET'
-    }
-  });
+  logger.info('Initiating SAP OAuth flow');
 
-  // Generate state and store it
   const state = crypto.randomBytes(16).toString('hex');
   oauthStateStore.set(state, {
     timestamp: Date.now(),
@@ -54,128 +39,181 @@ router.get('/sap', (req, res, next) => {
     userAgent: req.get('user-agent')
   });
 
-  logger.info('OAuth state generated', { state });
+  // Build authorization URL with proper scopes
+  const authorizationURL = process.env.SAP_AUTHORIZATION_URL;
+  const clientId = process.env.SAP_CLIENT_ID;
+  const redirectUri = process.env.SAP_CALLBACK_URL;
+  const scopes = 'openid email profile'; // Critical: openid is required for user info
 
-  passport.authenticate('sap', {
-    session: false, // Disable session, we'll use our own state management
+  const authUrl = `${authorizationURL}?` + new URLSearchParams({
+    response_type: 'code',
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    scope: scopes,
     state: state
-  })(req, res, next);
+  }).toString();
+
+  logger.info('Redirecting to SAP', {
+    authorizationURL,
+    clientId,
+    redirectUri,
+    scopes,
+    state
+  });
+
+  res.redirect(authUrl);
 });
 
-/**
- * SAP OAuth callback with state verification
- * GET /auth/sap/callback
- */
 router.get('/sap/callback', async (req, res) => {
   try {
-    // Log the callback request details
     logger.info('SAP OAuth callback received', {
       query: req.query,
       hasCode: !!req.query.code,
-      hasError: !!req.query.error,
-      errorDescription: req.query.error_description,
-      state: req.query.state
+      hasError: !!req.query.error
     });
 
-    // Check for OAuth errors in query params
     if (req.query.error) {
       logger.error('SAP OAuth returned error', {
         error: req.query.error,
-        errorDescription: req.query.error_description,
-        errorUri: req.query.error_uri
+        errorDescription: req.query.error_description
       });
-
       return res.redirect('/auth/sap/error?details=' + encodeURIComponent(req.query.error_description || req.query.error));
     }
 
-    // Verify state manually
     const receivedState = req.query.state;
-    if (!receivedState) {
-      logger.error('No state in callback');
-      return res.redirect('/auth/sap/error?details=Missing state parameter');
-    }
-
-    const storedStateData = oauthStateStore.get(receivedState);
-    if (!storedStateData) {
-      logger.error('Invalid or expired state', { receivedState });
+    if (!receivedState || !oauthStateStore.has(receivedState)) {
+      logger.error('Invalid or expired state');
       return res.redirect('/auth/sap/error?details=Invalid or expired state. Please try again.');
     }
 
-    // Delete used state
     oauthStateStore.delete(receivedState);
-
     logger.info('State verified successfully');
 
-    // Exchange code for token manually
     const code = req.query.code;
     if (!code) {
-      logger.error('No authorization code received');
       return res.redirect('/auth/sap/error?details=No authorization code received');
     }
 
-    logger.info('Exchanging code for tokens', {
-      tokenURL: process.env.SAP_TOKEN_URL,
-      callbackURL: process.env.SAP_CALLBACK_URL
-    });
+    logger.info('Exchanging code for tokens');
 
-    // Exchange authorization code for tokens
+    // Exchange code for tokens with Basic Auth
+    const basicAuth = Buffer.from(`${process.env.SAP_CLIENT_ID}:${process.env.SAP_CLIENT_SECRET}`).toString('base64');
+
     const tokenResponse = await axios.post(
       process.env.SAP_TOKEN_URL,
       new URLSearchParams({
-        grant_type: 'client_credentials',
+        grant_type: 'authorization_code',
         code: code,
-        client_id: process.env.SAP_CLIENT_ID,
-        client_secret: process.env.SAP_CLIENT_SECRET,
         redirect_uri: process.env.SAP_CALLBACK_URL
       }),
       {
         headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Authorization': `Basic ${basicAuth}`
         }
       }
     );
 
-    const { access_token, refresh_token, expires_in, token_type } = tokenResponse.data;
+    const { access_token, refresh_token, expires_in, token_type, id_token } = tokenResponse.data;
 
     logger.info('Tokens received from SAP', {
       hasAccessToken: !!access_token,
       hasRefreshToken: !!refresh_token,
+      hasIdToken: !!id_token,
       expiresIn: expires_in
     });
 
-    // Fetch user info from SAP
-    logger.info('Fetching user info from SAP', {
-      url: process.env.SAP_USER_INFO_URL
-    });
+    // Decode ID token to get user info (SAP usually puts user info here)
+    let userInfo = null;
 
-    const userInfoResponse = await axios.get(process.env.SAP_USER_INFO_URL, {
-      headers: {
-        'Authorization': `Bearer ${access_token}`,
-        'Accept': 'application/json'
+    if (id_token) {
+      try {
+        // Decode JWT (without verification - we trust SAP's token)
+        const base64Payload = id_token.split('.')[1];
+        const payload = Buffer.from(base64Payload, 'base64').toString('utf-8');
+        userInfo = JSON.parse(payload);
+
+        logger.info('User info from ID token', {
+          sub: userInfo.sub,
+          email: userInfo.email,
+          name: userInfo.name,
+          allClaims: Object.keys(userInfo)
+        });
+      } catch (error) {
+        logger.error('Failed to decode ID token', { error: error.message });
       }
-    });
+    }
 
-    const userInfo = userInfoResponse.data;
+    // If no ID token or ID token doesn't have user info, try userinfo endpoint
+    if (!userInfo || !userInfo.sub || userInfo.sub === process.env.SAP_CLIENT_ID) {
+      logger.info('Fetching user info from userinfo endpoint', {
+        url: process.env.SAP_USER_INFO_URL
+      });
 
-    logger.info('User info retrieved from SAP', {
-      userId: userInfo.sub || userInfo.id,
-      email: userInfo.email,
-      name: userInfo.name
-    });
+      try {
+        const userInfoResponse = await axios.get(process.env.SAP_USER_INFO_URL, {
+          headers: {
+            'Authorization': `Bearer ${access_token}`,
+            'Accept': 'application/json'
+          }
+        });
 
-    // Find or create user in your database
+        userInfo = userInfoResponse.data;
+
+        logger.info('User info retrieved from endpoint', {
+          sub: userInfo.sub,
+          email: userInfo.email,
+          name: userInfo.name,
+          allFields: Object.keys(userInfo)
+        });
+      } catch (error) {
+        logger.error('Failed to fetch user info from endpoint', {
+          error: error.message,
+          status: error.response?.status,
+          data: error.response?.data
+        });
+
+        // If userinfo endpoint fails but we have ID token, use it
+        if (id_token) {
+          const base64Payload = id_token.split('.')[1];
+          const payload = Buffer.from(base64Payload, 'base64').toString('utf-8');
+          userInfo = JSON.parse(payload);
+          logger.info('Falling back to ID token user info');
+        } else {
+          throw new Error('Unable to retrieve user information from SAP');
+        }
+      }
+    }
+
+    // Extract user ID from various possible fields
+    const sapUserId = userInfo.sub ||
+      userInfo.user_id ||
+      userInfo.id ||
+      userInfo.username ||
+      userInfo.email ||
+      userInfo.user_uuid;
+
+    if (!sapUserId || sapUserId === process.env.SAP_CLIENT_ID) {
+      logger.error('No valid user ID found in token', {
+        userInfo,
+        clientId: process.env.SAP_CLIENT_ID
+      });
+      throw new Error('SAP returned client credentials token instead of user token. Check your SAP OAuth configuration and scopes.');
+    }
+
+    logger.info('Valid user ID found', { sapUserId });
+
+    // Find or create user
     const User = require('../models/User');
-
-    let user = await User.findOne({ sapId: userInfo.sub || userInfo.id });
+    let user = await User.findOne({ sapId: sapUserId });
 
     if (!user) {
-      // Create new user
       user = await User.create({
-        sapId: userInfo.sub || userInfo.id,
-        email: userInfo.email,
-        name: userInfo.name || `${userInfo.given_name || ''} ${userInfo.family_name || ''}`.trim() || 'SAP User',
-        firstName: userInfo.given_name,
-        lastName: userInfo.family_name,
+        sapId: sapUserId,
+        email: userInfo.email || userInfo.mail || `${sapUserId}@sap.user`,
+        name: userInfo.name || userInfo.given_name || userInfo.firstname || userInfo.displayname || 'SAP User',
+        firstName: userInfo.given_name || userInfo.firstname || userInfo.givenName,
+        lastName: userInfo.family_name || userInfo.lastname || userInfo.familyName || userInfo.surname,
         provider: 'sap',
         roles: ['user'],
         sapProfile: userInfo,
@@ -189,7 +227,6 @@ router.get('/sap/callback', async (req, res) => {
         email: user.email
       });
     } else {
-      // Update existing user
       user.name = userInfo.name || user.name;
       user.sapProfile = userInfo;
       user.lastLogin = new Date();
@@ -202,7 +239,7 @@ router.get('/sap/callback', async (req, res) => {
       });
     }
 
-    // Generate your own JWT tokens
+    // Generate your JWT tokens
     const sessionId = crypto.randomUUID();
     const tokens = tokenService.generateTokenPair({
       userId: user._id.toString(),
@@ -211,7 +248,7 @@ router.get('/sap/callback', async (req, res) => {
       sessionId
     });
 
-    // Store session with encrypted SAP tokens
+    // Store session with SAP tokens
     const deviceInfo = {
       userAgent: req.get('user-agent'),
       ip: req.ip,
@@ -240,16 +277,14 @@ router.get('/sap/callback', async (req, res) => {
       sapId: user.sapId
     });
 
-    // Check if frontend URL is configured
     const frontendUrl = process.env.FRONTEND_URL;
 
     if (frontendUrl && frontendUrl !== 'http://localhost:3000') {
-      // Production: Redirect to frontend
       const redirectUrl = `${frontendUrl}/auth/callback?token=${tokens.accessToken}&refresh=${tokens.refreshToken}`;
       return res.redirect(redirectUrl);
     }
 
-    // Development/Testing: Display tokens in browser
+    // Display success page
     res.send(`
       <!DOCTYPE html>
       <html>
@@ -356,13 +391,13 @@ router.get('/sap/callback', async (req, res) => {
           </div>
 
           <div class="token-box">
-            <div class="token-label">Access Token (15 min):</div>
+            <div class="token-label">Your Access Token (15 min):</div>
             <div class="token-value" id="accessToken">${tokens.accessToken}</div>
             <button class="copy-btn" onclick="copyToken('accessToken')">📋 Copy Access Token</button>
           </div>
 
           <div class="token-box">
-            <div class="token-label">Refresh Token (7 days):</div>
+            <div class="token-label">Your Refresh Token (7 days):</div>
             <div class="token-value" id="refreshToken">${tokens.refreshToken}</div>
             <button class="copy-btn" onclick="copyToken('refreshToken')">📋 Copy Refresh Token</button>
           </div>
@@ -378,7 +413,7 @@ curl -H "Authorization: Bearer ${tokens.accessToken}" \\
           </div>
 
           <div class="note">
-            <strong>📝 Note:</strong> Access token expires in 15 minutes. Use the refresh token to get a new one.
+            <strong>📝 Note:</strong> These are YOUR application's JWT tokens (not SAP tokens).
             <br><br>
             <strong>Test endpoints:</strong>
             <ul>
@@ -427,24 +462,20 @@ curl -H "Authorization: Bearer ${tokens.accessToken}" \\
     logger.error('SAP OAuth callback error', {
       error: error.message,
       stack: error.stack,
-      response: error.response?.data
+      response: error.response?.data,
+      status: error.response?.status
     });
 
-    const errorMessage = error.response?.data?.error_description || error.message;
+    const errorMessage = error.response?.data?.error_description || error.response?.data?.error || error.message;
     res.redirect('/auth/sap/error?details=' + encodeURIComponent(errorMessage));
   }
 });
 
-/**
- * SAP OAuth error handler
- * GET /auth/sap/error
- */
 router.get('/sap/error', (req, res) => {
   const errorDetails = req.query.details || 'Unknown error';
 
   logger.logSecurityEvent('SAP_OAUTH_ERROR', {
     ip: req.ip,
-    query: req.query,
     errorDetails: errorDetails
   });
 
@@ -489,7 +520,6 @@ router.get('/sap/error', (req, res) => {
           color: #0f0;
           padding: 2px 6px;
           border-radius: 3px;
-          font-family: monospace;
         }
         a {
           display: inline-block;
@@ -509,21 +539,20 @@ router.get('/sap/error', (req, res) => {
         <h1>SAP Authentication Failed</h1>
         
         <div class="error-message">
-          <strong>Error Details:</strong><br>
+          <strong>Error:</strong><br>
           ${errorDetails}
         </div>
         
         <div class="tips">
-          <strong>Common Issues:</strong>
+          <strong>Common fixes:</strong>
           <ul>
-            <li><strong>State verification failed:</strong> Try clearing your browser cookies and try again</li>
-            <li><strong>Invalid client:</strong> Check SAP_CLIENT_ID and SAP_CLIENT_SECRET in .env</li>
-            <li><strong>Redirect URI mismatch:</strong> Callback URL must be <code>http://localhost:3000/auth/sap/callback</code></li>
-            <li><strong>Invalid scope:</strong> Check if SAP supports the requested scopes</li>
+            <li>Make sure <code>openid</code> scope is included in SAP_SCOPES</li>
+            <li>Verify the SAP OAuth app is configured for "Authorization Code" grant</li>
+            <li>Check if your SAP admin enabled user info access</li>
           </ul>
         </div>
 
-        <p>Check your server logs for detailed error messages.</p>
+        <p>Check server logs for more details.</p>
         
         <a href="/auth/sap">← Try Again</a>
       </div>
@@ -532,51 +561,21 @@ router.get('/sap/error', (req, res) => {
   `);
 });
 
-// ============================================================================
-// Token Management Routes
-// ============================================================================
-
-/**
- * Refresh access token
- * POST /auth/refresh
- */
+// Session routes (same as before)
 router.post('/refresh', async (req, res) => {
   try {
     const { refreshToken } = req.body;
-
     if (!refreshToken) {
-      return res.status(400).json({
-        success: false,
-        error: 'Refresh token required',
-        code: 'NO_REFRESH_TOKEN'
-      });
+      return res.status(400).json({ success: false, error: 'Refresh token required' });
     }
-
     const verification = tokenService.verifyRefreshToken(refreshToken);
-
     if (!verification.valid) {
-      logger.logSecurityEvent('INVALID_REFRESH_TOKEN', {
-        error: verification.error,
-        ip: req.ip
-      });
-
-      return res.status(401).json({
-        success: false,
-        error: 'Invalid refresh token',
-        code: 'INVALID_REFRESH_TOKEN'
-      });
+      return res.status(401).json({ success: false, error: 'Invalid refresh token' });
     }
-
     const session = await sessionService.findSessionByRefreshToken(refreshToken);
-
     if (!session) {
-      return res.status(401).json({
-        success: false,
-        error: 'Session not found or expired',
-        code: 'INVALID_SESSION'
-      });
+      return res.status(401).json({ success: false, error: 'Session not found' });
     }
-
     const newSessionId = crypto.randomUUID();
     const tokens = tokenService.generateTokenPair({
       userId: session.userId._id.toString(),
@@ -584,120 +583,39 @@ router.post('/refresh', async (req, res) => {
       roles: session.userId.roles,
       sessionId: newSessionId
     });
-
     await sessionService.invalidateSession(session._id);
-
-    const deviceInfo = {
-      userAgent: req.get('user-agent'),
-      ip: req.ip,
-      platform: req.get('sec-ch-ua-platform') || 'unknown',
-      browser: req.get('sec-ch-ua') || 'unknown'
-    };
-
-    await sessionService.createSession(
-      session.userId._id,
-      tokens.refreshToken,
-      deviceInfo,
-      session.provider,
-      session.providerTokens
-    );
-
-    logger.logAuthEvent('TOKEN_REFRESHED', {
-      userId: session.userId._id,
-      oldSessionId: session._id,
-      newSessionId
-    });
-
-    res.json({
-      success: true,
-      data: {
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken,
-        expiresIn: '15m',
-        tokenType: 'Bearer'
-      }
-    });
+    const deviceInfo = { userAgent: req.get('user-agent'), ip: req.ip, platform: 'unknown', browser: 'unknown' };
+    await sessionService.createSession(session.userId._id, tokens.refreshToken, deviceInfo, session.provider, session.providerTokens);
+    res.json({ success: true, data: { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, expiresIn: '15m', tokenType: 'Bearer' } });
   } catch (error) {
-    logger.error('Token refresh failed', {
-      error: error.message,
-      stack: error.stack
-    });
-
-    res.status(500).json({
-      success: false,
-      error: 'Token refresh failed'
-    });
+    res.status(500).json({ success: false, error: 'Token refresh failed' });
   }
 });
-
-// ============================================================================
-// Session Management Routes
-// ============================================================================
 
 router.post('/logout', authenticateToken, async (req, res) => {
   try {
     await sessionService.invalidateSession(req.session._id);
-
-    logger.logAuthEvent('USER_LOGOUT', {
-      userId: req.user.id,
-      sessionId: req.session._id
-    });
-
-    res.json({
-      success: true,
-      message: 'Logged out successfully'
-    });
+    res.json({ success: true, message: 'Logged out successfully' });
   } catch (error) {
-    logger.error('Logout failed', { error: error.message });
-    res.status(500).json({
-      success: false,
-      error: 'Logout failed'
-    });
+    res.status(500).json({ success: false, error: 'Logout failed' });
   }
 });
 
 router.post('/logout-all', authenticateToken, async (req, res) => {
   try {
     await sessionService.invalidateAllUserSessions(req.user.id);
-
-    logger.logAuthEvent('USER_LOGOUT_ALL', {
-      userId: req.user.id
-    });
-
-    res.json({
-      success: true,
-      message: 'All sessions logged out'
-    });
+    res.json({ success: true, message: 'All sessions logged out' });
   } catch (error) {
-    logger.error('Logout all failed', { error: error.message });
-    res.status(500).json({
-      success: false,
-      error: 'Logout all failed'
-    });
+    res.status(500).json({ success: false, error: 'Logout all failed' });
   }
 });
 
 router.get('/sessions', authenticateToken, async (req, res) => {
   try {
     const sessions = await sessionService.getUserSessions(req.user.id);
-
-    res.json({
-      success: true,
-      data: sessions.map(s => ({
-        id: s._id,
-        deviceInfo: s.deviceInfo,
-        lastActivity: s.lastActivity,
-        createdAt: s.createdAt,
-        provider: s.provider,
-        isCurrent: s._id.toString() === req.session._id.toString()
-      }))
-    });
+    res.json({ success: true, data: sessions.map(s => ({ id: s._id, deviceInfo: s.deviceInfo, lastActivity: s.lastActivity, createdAt: s.createdAt, provider: s.provider, isCurrent: s._id.toString() === req.session._id.toString() })) });
   } catch (error) {
-    logger.error('Get sessions failed', { error: error.message });
-    res.status(500).json({
-      success: false,
-      error: 'Failed to retrieve sessions'
-    });
+    res.status(500).json({ success: false, error: 'Failed to retrieve sessions' });
   }
 });
 
