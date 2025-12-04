@@ -1,103 +1,150 @@
+// ============================================================================
+// services/token.service.js
+// ============================================================================
 
-const axios = require('axios');
+const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
+const config = require('../config/auth.config');
 const logger = require('../utils/logger');
-const { getSAPAccessToken } = require('../routes/auth.routes');
 
 class TokenService {
-    constructor() {
-        this.baseURL = process.env.SAP_BASE_URL;
+    /**
+     * Generate access token with claims
+     */
+    generateAccessToken(payload) {
+        const tokenPayload = {
+            sub: payload.userId,
+            email: payload.email,
+            roles: payload.roles || [],
+            sessionId: payload.sessionId,
+            type: 'access'
+        };
+
+        const token = jwt.sign(tokenPayload, config.jwt.accessTokenSecret, {
+            expiresIn: config.jwt.accessTokenExpiry,
+            issuer: config.jwt.issuer,
+            audience: config.jwt.audience,
+            algorithm: config.jwt.algorithm,
+            jwtid: crypto.randomUUID()
+        });
+
+        logger.logAuthEvent('ACCESS_TOKEN_GENERATED', {
+            userId: payload.userId,
+            sessionId: payload.sessionId
+        });
+
+        return token;
     }
 
     /**
-     * Make authenticated request to SAP API
+     * Generate refresh token
      */
-    async makeRequest(session, endpoint, method = 'GET', data = null) {
+    generateRefreshToken(payload) {
+        const tokenPayload = {
+            sub: payload.userId,
+            sessionId: payload.sessionId,
+            type: 'refresh'
+        };
+
+        const token = jwt.sign(tokenPayload, config.jwt.refreshTokenSecret, {
+            expiresIn: config.jwt.refreshTokenExpiry,
+            issuer: config.jwt.issuer,
+            audience: config.jwt.audience,
+            algorithm: config.jwt.algorithm,
+            jwtid: crypto.randomUUID()
+        });
+
+        logger.logAuthEvent('REFRESH_TOKEN_GENERATED', {
+            userId: payload.userId,
+            sessionId: payload.sessionId
+        });
+
+        return token;
+    }
+
+    /**
+     * Generate token pair (access + refresh)
+     */
+    generateTokenPair(payload) {
+        return {
+            accessToken: this.generateAccessToken(payload),
+            refreshToken: this.generateRefreshToken(payload)
+        };
+    }
+
+    /**
+     * Verify access token with full validation
+     */
+    verifyAccessToken(token) {
         try {
-            // Get valid access token (auto-refreshes if needed)
-            const accessToken = await getSAPAccessToken(session);
+            const decoded = jwt.verify(token, config.jwt.accessTokenSecret, {
+                issuer: config.jwt.issuer,
+                audience: config.jwt.audience,
+                algorithms: [config.jwt.algorithm]
+            });
 
-            const config = {
-                method,
-                url: `${this.baseURL}${endpoint}`,
-                headers: {
-                    'Authorization': `Bearer ${accessToken}`,
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json'
-                }
-            };
-
-            if (data) {
-                config.data = data;
+            if (decoded.type !== 'access') {
+                throw new Error('Invalid token type');
             }
 
-            logger.info('Making SAP API request', {
-                endpoint,
-                method,
-                userId: session.userId
+            logger.debug('Access token verified', {
+                userId: decoded.sub,
+                sessionId: decoded.sessionId
             });
 
-            const startTime = Date.now();
-            const response = await axios(config);
-            const duration = Date.now() - startTime;
-
-            logger.trackDependency(
-                'SAP API',
-                `${method} ${endpoint}`,
-                duration,
-                true,
-                {
-                    type: 'HTTP',
-                    statusCode: response.status
-                }
-            );
-
-            return response.data;
+            return {
+                valid: true,
+                decoded
+            };
         } catch (error) {
-            logger.error('SAP API request failed', {
-                endpoint,
-                method,
+            logger.logSecurityEvent('ACCESS_TOKEN_VERIFICATION_FAILED', {
                 error: error.message,
-                status: error.response?.status,
-                data: error.response?.data
+                token: token.substring(0, 20) + '...'
             });
 
-            logger.trackDependency(
-                'SAP API',
-                `${method} ${endpoint}`,
-                0,
-                false,
-                {
-                    type: 'HTTP',
-                    error: error.message,
-                    statusCode: error.response?.status
-                }
-            );
-
-            throw error;
+            return {
+                valid: false,
+                error: error.message,
+                expired: error.name === 'TokenExpiredError'
+            };
         }
     }
 
     /**
-     * Example: Get user profile from SAP
+     * Verify refresh token
      */
-    async getUserProfile(session) {
-        return await this.makeRequest(session, '/api/user/profile', 'GET');
-    }
+    verifyRefreshToken(token) {
+        try {
+            const decoded = jwt.verify(token, config.jwt.refreshTokenSecret, {
+                issuer: config.jwt.issuer,
+                audience: config.jwt.audience,
+                algorithms: [config.jwt.algorithm]
+            });
 
-    /**
-     * Example: Create resource in SAP
-     */
-    async createResource(session, resourceData) {
-        return await this.makeRequest(session, '/api/resources', 'POST', resourceData);
-    }
+            if (decoded.type !== 'refresh') {
+                throw new Error('Invalid token type');
+            }
 
-    /**
-     * Example: Get SAP business data
-     */
-    async getBusinessData(session, filters = {}) {
-        const queryString = new URLSearchParams(filters).toString();
-        const endpoint = `/api/business-data${queryString ? '?' + queryString : ''}`;
-        return await this.makeRequest(session, endpoint, 'GET');
+            logger.debug('Refresh token verified', {
+                userId: decoded.sub,
+                sessionId: decoded.sessionId
+            });
+
+            return {
+                valid: true,
+                decoded
+            };
+        } catch (error) {
+            logger.logSecurityEvent('REFRESH_TOKEN_VERIFICATION_FAILED', {
+                error: error.message
+            });
+
+            return {
+                valid: false,
+                error: error.message,
+                expired: error.name === 'TokenExpiredError'
+            };
+        }
     }
 }
 
